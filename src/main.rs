@@ -36,8 +36,9 @@ async fn main() {
     let asset_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
 
     let app = Router::new()
+        // 这里的fallback_service是用来处理没有匹配路由时使用的备用服务
         .fallback_service(ServeDir::new(asset_dir).append_index_html_on_directories(true))
-        .route("/ws", get(ws_handler))
+        .route("/ws", get(ws_handler)) // 使用get
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
@@ -67,10 +68,12 @@ async fn ws_handler(
         String::from("Unknown browser")
     };
     println!("`{user_agent}` at {addr} connected.");
+    // 每个ws链接都会生成一个handle_socket(socket, addr)线程
     ws.on_upgrade(move |socket| handle_socket(socket, addr))
 }
 
 async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
+    // 这里首先给链接过来的ws发送一个数组`vec![1, 2, 3]`
     if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
         print!("Pinged {who}...");
     } else {
@@ -78,17 +81,19 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         return;
     }
 
+    // 接收ws发来的消息
     if let Some(msg) = socket.recv().await {
-        info!(" ---- msg: {:?}", msg);
         if let Ok(msg) = msg {
-            info!("----> go deal msg: {:?}", msg);
+            info!("----> go deal msg: {:?}", msg); // 其实就是client发来的Hello World!
+                                                   // 去具体处理发来的请求
             if process_message(msg, who).is_break() {
-                info!("1. client {who} abruptly disconnected, because of flow control is breaked");
+                info!("client {who} abruptly disconnected, because of flow control is breaked");
                 return;
             }
         }
     }
 
+    // 向客户端发送两个消息"Hi 1 times!" 和 "Hi 2 times!"
     for i in 1..3 {
         if socket
             .send(Message::Text(format!("Hi {i} times!")))
@@ -101,8 +106,10 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
+    // 调用split()将socket的接收和发送分开
     let (mut sender, mut receiver) = socket.split();
 
+    // 起新线程发送20条消息
     let mut send_task = tokio::spawn(async move {
         let n_msg = 20;
         for i in 0..n_msg {
@@ -119,6 +126,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         n_msg
     });
 
+    // 起线程来接收处理客户发来的消息,并计数
     let mut recv_task = tokio::spawn(async move {
         let mut cnt = 0;
         while let Some(Ok(msg)) = receiver.next().await {
@@ -130,13 +138,15 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         cnt
     });
 
+    //
     tokio::select! {
         rv_a = (&mut send_task) => {
             match rv_a {
                 Ok(a) => println!("total {a} message sent to {who}"),
                 Err(a) => println!("Error sending message {a:?}")
             }
-            //recv_task.abort();
+            //recv_task.abort(); // 这里如果注释要是为了让客户端的消息发完，客户端发30条，服务端20
+            //条，如果关了，就接收不到客户端后来发送的消息了
         },
         rv_b =(&mut recv_task) => {
             match rv_b {
@@ -150,6 +160,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
     println!("3. WebSocket context {who} destroyed");
 }
 
+// 对不同的类型的消息分别处理
 fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
@@ -167,7 +178,7 @@ fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
             } else {
                 println!(">>> {who} somehow sent close message without CloseFrame");
             }
-            return ControlFlow::Break(());
+            return ControlFlow::Break(()); // 这里手动break会导致is_break()为true
         }
 
         Message::Pong(v) => {

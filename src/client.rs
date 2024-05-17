@@ -22,7 +22,7 @@ use tokio_tungstenite::{
     tungstenite::protocol::{frame::coding::CloseCode, CloseFrame, Message},
 };
 
-const N_CLIENTS: usize = 1; //set to desired number
+const N_CLIENTS: usize = 2; //set to desired number
 const SERVER: &str = "ws://127.0.0.1:3000/ws";
 
 #[tokio::main]
@@ -30,6 +30,7 @@ async fn main() {
     let start_time = Instant::now();
     //spawn several clients that will concurrently talk to the server
     let mut clients = (0..N_CLIENTS)
+        // 起2个线程跟服务端交互
         .map(|cli| tokio::spawn(spawn_client(cli)))
         .collect::<FuturesUnordered<_>>();
 
@@ -47,6 +48,7 @@ async fn main() {
 
 //creates a client. quietly exits on failure.
 async fn spawn_client(who: usize) {
+    // 链接服务器
     let ws_stream = match connect_async(SERVER).await {
         Ok((stream, response)) => {
             println!("Handshake for client {who} has been completed");
@@ -61,6 +63,7 @@ async fn spawn_client(who: usize) {
         }
     };
 
+    // 分割socket为发送和读写两部分
     let (mut sender, mut receiver) = ws_stream.split();
 
     //we can ping the server for start
@@ -71,6 +74,7 @@ async fn spawn_client(who: usize) {
 
     //spawn an async sender to push some more messages into the server
     let mut send_task = tokio::spawn(async move {
+        // 发送30条信息
         for i in 1..30 {
             // In any websocket error, break loop.
             if sender
@@ -87,6 +91,7 @@ async fn spawn_client(who: usize) {
 
         // When we are done we may want our client to close connection cleanly.
         println!("Sending close to {who}...");
+        // 告诉服务端，需要关闭链接了
         if let Err(e) = sender
             .send(Message::Close(Some(CloseFrame {
                 code: CloseCode::Normal,
